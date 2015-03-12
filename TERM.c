@@ -808,7 +808,7 @@ REOPEN:
 int main(int argc, char **argv)
 {
 	char portName[255];
-	int port,baud_rate=115200;
+	int port=1,baud_rate=115200;
 	HANDLE	hComm;
 
 	SetConsoleTitle("TERM (build: "__DATE__ "  " __TIME__")");
@@ -847,6 +847,7 @@ int main(int argc, char **argv)
 		}
 	}
 retry:
+	portName[0]=0;
 	find_all_ports();
 	printf("enter port selection:\n");
 	gets(portName);

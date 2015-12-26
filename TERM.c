@@ -1,6 +1,6 @@
 
 #include <windows.h>
-
+#include <string.h>
 #include <fcntl.h> 
 #include <io.h> 
 #include <stdlib.h> 
@@ -10,7 +10,6 @@
 
 
 int		hCrt;
-char portName[255];
 FILE *file=0;
 int filelen=0;
 char filename[300];
@@ -136,16 +135,14 @@ int set_baud(HANDLE hComm,int baud_rate)
 	return TRUE;
 }
 
-HANDLE connect_device(char portName[],int baud_rate)
+HANDLE connect_device(char *port_name,int baud_rate)
 {
 	DCB	config_comm;
 	COMMTIMEOUTS comTimeOut;
 	HANDLE hComm=0;
-	char devname[80];
 
-	sprintf(devname,"\\\\.\\%s",portName);
 
-	hComm = CreateFile(devname,	// Specify port device: default "\\.\COM1"
+	hComm = CreateFile(port_name,	// Specify port device: default "\\.\COM1"
 		GENERIC_READ|GENERIC_WRITE,	// Specify mode that open device.
 		0,							// share mode.
 		NULL,                       // the object gets a default security.
@@ -155,14 +152,13 @@ HANDLE connect_device(char portName[],int baud_rate)
 
 	if (hComm == INVALID_HANDLE_VALUE)	// error opening port; abort
 	{
-		printf("Could not open port: %s\r\nCOM port may be in use by another program\n",portName);
-		goto exit;
+		printf("Could not open port: %s\r\nCOM port may be in use by another program\n",port_name);
+		return 0;
 	}	
 	// Get current configuration of serial communication port.
     if (GetCommState(hComm,&config_comm) == 0)
     {
       printf("Get configuration port failed\r\n");
-      goto exit;
     }
 
 	config_comm.BaudRate=baud_rate;
@@ -175,7 +171,6 @@ HANDLE connect_device(char portName[],int baud_rate)
 	if (SetCommState(hComm,&config_comm) == 0)
 	{
       printf("Set configuration port failed\r\n");
-      goto exit;
 	}
 
 	GetCommTimeouts(hComm,&comTimeOut);
@@ -186,25 +181,13 @@ HANDLE connect_device(char portName[],int baud_rate)
     comTimeOut.WriteTotalTimeoutMultiplier = 20;
     comTimeOut.WriteTotalTimeoutConstant = 10;
     SetCommTimeouts(hComm,&comTimeOut);
-
-
-
-
 	return hComm;
-
-
-exit:	
-	CloseHandle(hComm);
-
-
-	return 0;
-
 }
 
 int find_all_ports()
 {
 	HANDLE hComm;
-	char portName[80];
+	char port_name[80];
 	char devname[80];
 	int i;
 
@@ -212,7 +195,7 @@ int find_all_ports()
 
 	for(i=0;i<19;i++)
 	{
-		sprintf(portName,"COM%i",i);
+		sprintf(port_name,"COM%i",i);
 		sprintf(devname,"\\\\.\\COM%i",i);
 		hComm = CreateFile(devname,  // Specify port device: default "COM1"
 			GENERIC_READ | GENERIC_WRITE,       // Specify mode that open device.
@@ -225,7 +208,7 @@ int find_all_ports()
 		if (hComm != INVALID_HANDLE_VALUE)
 		{
 			CloseHandle(hComm);
-			printf("%s\n",portName);
+			printf("%s\n",port_name);
 		}
 
 	}
@@ -563,11 +546,11 @@ int is_second()
 
 }
 */
-void set_console_title(char portName[],int baud_rate,int echo,int ansi)
+void set_console_title(char *port_name,int baud_rate,int echo,int ansi)
 {
 	char buffer[255];
 
-	sprintf(buffer,"%s %i %s %s(ctrl-c=quit,F1=echo F9=cls F10=ansi F11=reopen F12=baud)",portName,baud_rate,echo ? "ECHO":"",
+	sprintf(buffer,"%s %i %s %s(ctrl-c=quit,F1=echo F9=cls F10=ansi F11=reopen F12=baud)",port_name,baud_rate,echo ? "ECHO":"",
 		ansi ? "ANSI" : "");
 	SetConsoleTitle(buffer);
 }
@@ -600,7 +583,7 @@ DWORD WINAPI read_thread(HANDLE hComm)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
-mode_terminal(HANDLE hComm,char portName[],int baud_rate)
+mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 {
 	int i,j,length,key;
 	char buffer[0x100],RXbuf;
@@ -615,7 +598,7 @@ mode_terminal(HANDLE hComm,char portName[],int baud_rate)
 	PurgeComm(hComm,PURGE_RXCLEAR|PURGE_RXABORT);
 
 	hcon = GetStdHandle(STD_OUTPUT_HANDLE);
-	set_console_title(portName,baud_rate,echo,ansi_mode);
+	set_console_title(port_name,baud_rate,echo,ansi_mode);
 
 	con_cursor.bVisible=TRUE;
 	con_cursor.dwSize=100;
@@ -667,21 +650,21 @@ mode_terminal(HANDLE hComm,char portName[],int baud_rate)
 			{	
 				case ';':
 					echo^=TRUE;
-					set_console_title(portName,baud_rate,echo,ansi_mode);
+					set_console_title(port_name,baud_rate,echo,ansi_mode);
 					break;
 				case 0x43:
 					clrscr();
 					break;
 				case 0x44: 
 					ansi_mode^=TRUE;
-					set_console_title(portName,baud_rate,echo,ansi_mode);
+					set_console_title(port_name,baud_rate,echo,ansi_mode);
 					break;
 				case 0x85: //F11
 					CloseHandle(hComm);
-					hComm=connect_device(portName,baud_rate);
+					hComm=connect_device(port_name,baud_rate);
 					if(hComm==0)
 					{
-						printf("\nCant reopen port %s\n",portName);
+						printf("\nCant reopen port %s\n",port_name);
 						Sleep(250);
 						return;
 					}
@@ -698,7 +681,7 @@ mode_terminal(HANDLE hComm,char portName[],int baud_rate)
 						if(set_baud(hComm,baud))
 						{
 							baud_rate=baud;
-							set_console_title(portName,baud_rate,echo,ansi_mode);
+							set_console_title(port_name,baud_rate,echo,ansi_mode);
 						}
 					}
 					break;
@@ -735,7 +718,7 @@ mode_terminal(HANDLE hComm,char portName[],int baud_rate)
 
 int main(int argc, char **argv)
 {
-	char portName[255];
+	char port_name[255]={0};
 	int port,baud_rate=19200;
 	HANDLE	hComm;
 
@@ -750,38 +733,53 @@ int main(int argc, char **argv)
 				sscanf(argv[i],"-baud=%u",&baud_rate);
 				printf("baud rate=%i\n",baud_rate);
 			}
-			else if(strstr(argv[i],"echo"))
+			else if(strstr(argv[i],"-echo"))
 			{
 				echo=TRUE;
 				printf("echo enabled\n");
 			}
-			else if(strstr(argv[i],"ansi"))
+			else if(strstr(argv[i],"-ansi"))
 			{
 				ansi_mode=TRUE;
 				printf("ansi mode enabled\n");
 			}
+			else if(strstr(argv[i],"-port"))
+			{
+				port_name[0]=0;
+				sscanf(argv[i],"-port=%254s",port_name);
+				printf("using port name %s\n",port_name);
+			}
 			else 
 			{
-				printf("usage: [echo] [ansi] [-baud=#]\n");
+				printf("usage: [-port=\\\\.\\COM1] [-echo] [-ansi] [-baud=#]\n");
 			}
 		}
 	}
+	if(port_name[0]==0){
 retry:
-	find_all_ports();
-	printf("enter port selection:\n");
-	gets(portName);
-	if(sscanf(portName,"%i",&port)!=1)
-		if(sscanf(portName,"COM%i",&port)!=1)
-			sscanf(portName,"com%i",&port);
-	sprintf(portName,"COM%i",port);
-	printf("port=%i\n",port);
-	hComm=connect_device(portName,baud_rate);
-	if(hComm==0)
-	{
-		goto retry;
+		port_name[0]=0;
+		find_all_ports();
+		printf("enter port selection:\n");
+		scanf("%254s",port_name);
+		port_name[sizeof(port_name)-1]=0;
+		port=-1;
+		if(sscanf(port_name,"%i",&port)!=1){
+			char tmp[sizeof(port_name)]={0};
+			strncpy(tmp,port_name,sizeof(tmp));
+			tmp[sizeof(tmp)-1]=0;
+			strlwr(tmp);
+			sscanf(tmp,"COM%i",&port);
+		}
+		if(port!=-1){
+			sprintf(port_name,"\\\\.\\COM%i",port);
+			printf("port=%i\n",port);
+		}
 	}
+	hComm=connect_device(port_name,baud_rate);
+	if(hComm==0)
+		goto retry;
 
-	mode_terminal(hComm,portName,baud_rate);
+	mode_terminal(hComm,port_name,baud_rate);
 	CloseHandle(hComm);
 
 }

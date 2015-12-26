@@ -16,18 +16,27 @@ char filename[300];
 char *fbuffer;
 int echo=FALSE;
 int ansi_mode=FALSE;
+int byte_size=8;
 
 
 
-void clrscr ()
+void clrscr()
 {
-	DWORD nchars;
-	HANDLE handle = GetStdHandle (STD_OUTPUT_HANDLE);
-	COORD xy_first = { 0, 0 };
-	
-	// fill scr buf with spaces, 'nchars' is not needed here
-	FillConsoleOutputCharacter (handle, ' ',  80*50, xy_first, &nchars);
-	SetConsoleCursorPosition (handle, xy_first); 
+	COORD coordScreen={0,0}; 
+    BOOL bSuccess;
+    DWORD cCharsWritten;
+    CONSOLE_SCREEN_BUFFER_INFO csbi={0};
+    DWORD dwConSize;
+	HANDLE hConsole;
+	hConsole=GetStdHandle(STD_OUTPUT_HANDLE);
+	bSuccess=GetConsoleScreenBufferInfo(hConsole,&csbi);
+	if(bSuccess){
+		dwConSize=csbi.dwSize.X*csbi.dwSize.Y;
+		bSuccess=FillConsoleOutputCharacter(hConsole,' ',dwConSize,coordScreen,&cCharsWritten);
+		bSuccess=GetConsoleScreenBufferInfo(hConsole,&csbi);
+		bSuccess=FillConsoleOutputAttribute(hConsole,csbi.wAttributes,dwConSize,coordScreen,&cCharsWritten);
+		bSuccess=SetConsoleCursorPosition(hConsole,coordScreen);
+	}
 }
 
 
@@ -134,6 +143,14 @@ int set_baud(HANDLE hComm,int baud_rate)
 	}
 	return TRUE;
 }
+int set_dtr(HANDLE hcomm,int flag)
+{
+	DCB	config_comm;
+    if(GetCommState(hcomm,&config_comm) == 0){
+		printf("Get configuration port failed\r\n");
+		return 0;
+    }
+}
 
 HANDLE connect_device(char *port_name,int baud_rate)
 {
@@ -162,7 +179,7 @@ HANDLE connect_device(char *port_name,int baud_rate)
     }
 
 	config_comm.BaudRate=baud_rate;
-	config_comm.ByteSize=8;
+	config_comm.ByteSize=byte_size;
 	config_comm.Parity=NOPARITY;
 	config_comm.StopBits=ONESTOPBIT;
 	config_comm.fOutX=0;
@@ -436,157 +453,188 @@ int parse_ansi(char *buffer, int length)
 	}
 
 }
-/*
-char log1[]={0x4,0xd,0};
-char log2[]="sta\r";
-char resp1[]= " rtyryrENTER SELECTIONrtytr";
-char resp2[]="rtrtryFMU Idle Comm Timerrtyr";
-char resp3[]="rtyrtWAITING_FOR_HOSErtyrt";
-char resp4[]="rtyrtyHOSE_INSERTEDrty";
-char resp5[]="rtyrtHOSE_ENUMERATEDrtyrt";
-
-int sniffer(HANDLE hComm,char buffer[])
-{
-	static int index=0;
-	int i,length;
-	static int state=0;
-
-//	printf("state=%i,index=%i\n",state,index);
-	i=getkey2();
-	if(i=='1')
-	{
-		printf("xxx\n");
-		WriteFile(hComm,resp2,strlen(resp2),&length,NULL);
-
-	}
-	switch(state)
-	{
-	case 0:
-		for(i=0;i<100;i++)
-		{
-			if(buffer[i]==0)
-				break;
-			if(buffer[i]==log1[index])
-				index++;
-			else
-				index=0;
-			if(log1[index]==0)
-			{
-				index=0;
-				state++;
-				printf("sending enter selection\n");
-				WriteFile(hComm,resp1,strlen(resp1),&length,NULL);
-				break;
-
-			}
-		}
-		break;
-	case 1:
-		for(i=0;i<100;i++)
-		{
-			if(buffer[i]==0)
-				break;
-			if(buffer[i]==log2[index])
-				index++;
-			else
-				index=0;
-			if(buffer[i]==log1[index] && index==0)
-			{
-				state=0;
-				index=0;
-			}
-			if(log2[index]==0)
-			{
-				index=0;
-				state++;
-				printf("sending FMU Idle Comm Time\n");
-				WriteFile(hComm,resp2,strlen(resp2),&length,NULL);
-				break;
-
-			}
-		}
-		break;
-	case 2:
-		printf("***state2***\n");
-		state++;
-		WriteFile(hComm,resp3,strlen(resp3),&length,NULL);
-		break;
-	case 3:
-		state++;
-		WriteFile(hComm,resp4,strlen(resp4),&length,NULL);
-		break;
-	case 4:
-		state++;
-		WriteFile(hComm,resp5,strlen(resp5),&length,NULL);
-		break;
-	case 5:
-		state=0;
-		break;
-	default:
-		state=0;
-		index=0;
-		break;
-	}
-}
-int is_second()
-{
-	static DWORD tick=0,tick2=0;
-
-	if(tick==0)
-		tick=GetTickCount();
-
-	tick2=GetTickCount()-tick;
-
-	if(tick2>400)
-	{
-		tick=GetTickCount();
-		return TRUE;
-	}
-	return FALSE;
-
-}
-*/
-void set_console_title(char *port_name,int baud_rate,int echo,int ansi)
+void set_console_title(char portName[],int baud_rate,int echo,int ansi,int hex)
 {
 	char buffer[255];
 
-	sprintf(buffer,"%s %i %s %s(ctrl-c=quit,F1=echo F9=cls F10=ansi F11=reopen F12=baud)",port_name,baud_rate,echo ? "ECHO":"",
-		ansi ? "ANSI" : "");
+	sprintf(buffer,"%s %i %s%s%s(ctrl-c=quit,F2=echo F8=hex F9=cls F10=ansi F11=reopen F12=baud)",portName,baud_rate,echo ? "ECHO ":"",
+		ansi ? "ANSI " : "", hex ? "HEX ":"");
 	SetConsoleTitle(buffer);
 }
-DWORD WINAPI read_thread(HANDLE hComm)
+int dump_data(char *buf,int len)
 {
-	char buffer[0x100];
-	int i,length;
-	DWORD dwEvents;
-
-//	SetCommMask(hComm,EV_RXCHAR);
-	do{
-		memset(buffer,0,sizeof(buffer));
-		length=0;
-//		WaitCommEvent( hComm, &dwEvents, NULL);
-//		Sleep(1);
-		ReadFile(hComm,buffer,0xFF,&length,NULL);
-//		length=0;
-		if(length!=0)
-		{
-			if(ansi_mode!=0)
-				parse_ansi(buffer,length);
+	int i;
+	for(i=0;i<len;i+=16){
+		int j,max;
+		max=i+16;
+		if(max>len)
+			max=len;
+		for(j=i;j<max;j++){
+			unsigned char c=buf[j];
+			printf("%02X ",c);
+		}
+		if(max!=(i+16)){
+			for(j=0;j<(i+16-len);j++)
+				printf("   ");
+		}
+		for(j=i;j<max;j++){
+			unsigned char c=buf[j];
+			if(c>=' ' && c<=127)
+				printf("%c",c);
 			else
-			{
-				for(i=0;i<length;i++)
-					printf("%c",buffer[i]);
+				printf(".");
+		}
+		printf("\n");
+	}
+	return 0;
+}
+
+int get_date(char *date,int len)
+{
+	SYSTEMTIME systime;
+	GetSystemTime(&systime);
+	return GetDateFormat(LOCALE_USER_DEFAULT,0,&systime,"yyMMdd",date,len);
+}
+int create_authorization(char *buffer,int len,int approved)
+{
+	int serial_num=12345678;
+	int index=0;
+	int trans_number=1234;
+	int type=0;
+	char *resp_code="";
+	char *appr_code="123456";
+	char *msg="";
+	char date[40]={0};
+	char pin[80]={0};
+	char data_source='X';
+	int tmp_amount=100;
+	get_date(date,sizeof(date));
+	if(approved){
+		resp_code="AA";
+		msg="Approved";
+	}
+	else{
+		resp_code="NX";
+		msg="Denied";
+	}
+	//_snprintf(buffer,len,"50.%8.8i%1.1i%4.4i%2.2s%6.6s%6.6s%s",serial_num,index,trans_number,resp_code,appr_code,date,msg);
+	type=20; //Credit Sale
+	type=21; //credit void
+	_snprintf(pin,sizeof(pin),"%8s%16.16i%20.20i"," ",99,98);
+	_snprintf(buffer,len,"50.%42s%2.2i%8.8i %4.4i%c%c%s%c%i"," ",type,serial_num,trans_number,28,data_source,pin,28,tmp_amount*100);
+	if(len>0)
+		buffer[len-1]=0;
+	return TRUE;
+
+}
+int create_status(char *buffer,int len)
+{
+	int status=0;
+	char *msg="APPROVED";
+	status=6; //approved/declined
+	msg="DECLINED";
+	switch(status){
+	default:
+	case 6:
+		_snprintf(buffer,len,"11.%2.2i%s",status,msg);
+		break;
+	}
+	return TRUE;
+
+}
+int process_command(HANDLE hcom,unsigned char *command,int len)
+{
+	char response[255]={0};
+	int wlen,sent;
+	int cmd=atoi(command);
+	switch(cmd){
+	case 7: //unit data
+		printf("sending response\n");
+		wlen=_snprintf(response,sizeof(response),"%c11.00%c*",2,3); //STX,ETX
+		wlen=_snprintf(response,sizeof(response),"%c",6); //6=ACK 21=NAK
+		WriteFile(hcom,response,wlen,&sent,NULL);
+		break;
+	case 13: //amount
+		{
+			char tmp[255]={0};
+			create_authorization(tmp,sizeof(tmp),TRUE);
+			wlen=_snprintf(response,sizeof(response),"%c%s%c%c",2,tmp,28,3); //STX,ETX
+			printf("sending authorized %s\n",response);
+			WriteFile(hcom,response,wlen,&sent,NULL);
+		}
+		break;
+	case 11:
+		{
+			char tmp[255]={0};
+			create_status(tmp,sizeof(tmp));
+			wlen=_snprintf(response,sizeof(response),"%c%s%c",2,tmp,3); //STX,ETX
+			printf("sending status authorized %s\n",response);
+			WriteFile(hcom,response,wlen,&sent,NULL);
+		}
+		break;
+	case 10: //reset
+	default:
+		printf("sending default response\n");
+		wlen=_snprintf(response,sizeof(response),"%c",6); //6=ACK 21=NAK
+		WriteFile(hcom,response,wlen,&sent,NULL);
+	}
+	return TRUE;
+}
+int handle_pinpad(HANDLE hcom,unsigned char *buf,int len)
+{
+	static char command[255]={0};
+	static char entire[255]={0};
+	static int state=0;
+	static int c_index=0;
+	static int e_index=0;
+	int i;
+	unsigned char a;
+	for(i=0;i<len;i++){
+		a=buf[i];
+		switch(state){
+		default:
+		case 0:
+			if(a==2){
+				printf("found start\n");
+				memset(command,0,sizeof(command));
+				c_index=0;
+				e_index=0;
+				state=1;
 			}
+			break;
+		case 1:
+			if(a==3){
+				printf("found end\ncommand=%s\n",command);
+				process_command(hcom,command,c_index);
+				state=0;
+			}
+			else{
+				if(c_index<sizeof(command))
+					command[c_index++]=a;
+			}
+			break;
+		}
+		if(e_index<sizeof(entire))
+			entire[e_index++]=a;
+		if(a=='*' && FALSE){
+			if(e_index<sizeof(entire))
+				entire[e_index++]=0;
+			printf("entire=%s\n",entire);
+			memset(entire,0,sizeof(entire));
+			e_index=0;
 		}
 
-	}while(TRUE);
+	}
+	return TRUE;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
-mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
+mode_terminal(HANDLE hcom,char *port_name,int baud_rate)
 {
 	int i,j,length,key;
 	char buffer[0x100],RXbuf;
+	int hex=FALSE;
+	int dtr_flag=TRUE;
 
 	HANDLE hcon;
 	CONSOLE_CURSOR_INFO con_cursor;
@@ -595,37 +643,25 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 	DWORD time1;
 
 	printf("clearing RX buffer\n");
-	PurgeComm(hComm,PURGE_RXCLEAR|PURGE_RXABORT);
+	PurgeComm(hcom,PURGE_RXCLEAR|PURGE_RXABORT);
 
 	hcon = GetStdHandle(STD_OUTPUT_HANDLE);
-	set_console_title(port_name,baud_rate,echo,ansi_mode);
+	set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
 
 	con_cursor.bVisible=TRUE;
 	con_cursor.dwSize=100;
 	SetConsoleCursorInfo(hcon,&con_cursor);
 
-	hcon = GetStdHandle(STD_OUTPUT_HANDLE);
-	coord.X=80;
-	coord.Y=30;
-	SetConsoleScreenBufferSize(hcon,coord);
-	rect.Bottom=30-1;
-	rect.Top=0;
-	rect.Left=0;
-	rect.Right=80-1;
-	SetConsoleWindowInfo(hcon,TRUE,&rect);
-
 	j=0;
 	clrscr();
 		
-
-//	CreateThread(NULL,NULL,read_thread,hComm,0,&i);
 
 	do{
 
 		Sleep(20);
 		memset(buffer,0,0x100);
 		length=0;
-		ReadFile(hComm,buffer,0xFF,&length,NULL);
+		ReadFile(hcom,buffer,0xFF,&length,NULL);
 
 		if(length!=0)
 		{
@@ -633,8 +669,13 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 				parse_ansi(buffer,length);
 			else
 			{
-				for(i=0;i<length;i++)
-					printf("%c",buffer[i]);
+				if(hex)
+					dump_data(buffer,length);
+				else
+					printf("%.*s",length,buffer);
+				//handle_pinpad(hcom,buffer,length);
+				//for(i=0;i<length;i++)
+				//	printf("%c",buffer[i]);
 			}
 		}
 
@@ -646,23 +687,43 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 
 		if(extended_key)
 		{
+			//printf("key=%08X\n",key);
 			switch(key)
 			{	
-				case ';':
-					echo^=TRUE;
-					set_console_title(port_name,baud_rate,echo,ansi_mode);
+				case 0x3B: //F1
+					printf("\nF3=set DTR\n");
 					break;
-				case 0x43:
+				case 0x3C: //F2
+					echo^=TRUE;
+					set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+					break;
+				case 0x3D: //F3
+					dtr_flag=!dtr_flag;
+					set_dtr(hcom,dtr_flag);
+					break;
+				case 0x3F: //f5
+					printf("enter byte size (current=%i)\n",byte_size);
+					scanf("%i",&byte_size);
+					printf("byte size %i\n",byte_size);
+					printf("setting com port\n");
+					goto REOPEN;
+					break;
+				case 0x42: //f8
+					hex=!hex;
+					set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+					break;
+				case 0x43: //f9
 					clrscr();
 					break;
-				case 0x44: 
+				case 0x44: //f10
 					ansi_mode^=TRUE;
-					set_console_title(port_name,baud_rate,echo,ansi_mode);
+					set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
 					break;
 				case 0x85: //F11
-					CloseHandle(hComm);
-					hComm=connect_device(port_name,baud_rate);
-					if(hComm==0)
+REOPEN:
+					CloseHandle(hcom);
+					hcom=connect_device(port_name,baud_rate);
+					if(hcom==0)
 					{
 						printf("\nCant reopen port %s\n",port_name);
 						Sleep(250);
@@ -670,7 +731,7 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 					}
 					printf("\nport reopened\n");
 					//RXbuf=VK_ESCAPE;
-					//WriteFile(hComm,&RXbuf,1,&length,NULL);
+					//WriteFile(hcom,&RXbuf,1,&length,NULL);
 
 					break;
 				case 0x86: //F12
@@ -678,10 +739,10 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 						int baud=14400;
 						printf("\nEnter new baud rate:");
 						scanf("%i",&baud);
-						if(set_baud(hComm,baud))
+						if(set_baud(hcom,baud))
 						{
 							baud_rate=baud;
-							set_console_title(port_name,baud_rate,echo,ansi_mode);
+							set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
 						}
 					}
 					break;
@@ -699,7 +760,7 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 					printf("\n"); //clrscr();
 			}
 			RXbuf=key;
-			WriteFile(hComm,&RXbuf,1,&length,NULL);
+			WriteFile(hcom,&RXbuf,1,&length,NULL);
 		}
 
 
@@ -719,7 +780,7 @@ mode_terminal(HANDLE hComm,char *port_name,int baud_rate)
 int main(int argc, char **argv)
 {
 	char port_name[255]={0};
-	int port,baud_rate=19200;
+	int port=1,baud_rate=115200;
 	HANDLE	hComm;
 
 	SetConsoleTitle("TERM (build: "__DATE__ "  " __TIME__")");

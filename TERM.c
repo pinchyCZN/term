@@ -700,7 +700,7 @@ mode_terminal(HANDLE hcom,char portName[],int baud_rate)
 				if(hex)
 					dump_data(buffer,length);
 				else
-					printf("%.*s\n",length,buffer);
+					printf("%.*s",length,buffer);
 				//handle_pinpad(hcom,buffer,length);
 				//for(i=0;i<length;i++)
 				//	printf("%c",buffer[i]);
@@ -719,7 +719,6 @@ mode_terminal(HANDLE hcom,char portName[],int baud_rate)
 			switch(key)
 			{	
 				case 0x3B: //F1
-					printf("\nF3=set DTR\n");
 					break;
 				case 0x3C: //F2
 					echo^=TRUE;
@@ -850,12 +849,12 @@ retry:
 	portName[0]=0;
 	find_all_ports();
 	printf("enter port selection:\n");
-	gets(portName);
-	if(sscanf(portName,"%i",&port)!=1)
-		if(sscanf(portName,"COM%i",&port)!=1)
-			sscanf(portName,"com%i",&port);
-	sprintf(portName,"COM%i",port);
-	printf("port=%i\n",port);
+	fgets(portName,sizeof(portName),stdin);
+	portName[sizeof(portName)-1]=0;
+	if(sscanf(portName,"%i",&port)==1){
+		sprintf(portName,"COM%i",port);
+	}
+	printf("opening port=%s\n",portName);
 	hComm=connect_device(portName,baud_rate,byte_size);
 	if(hComm==0)
 	{

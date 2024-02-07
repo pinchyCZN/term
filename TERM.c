@@ -17,6 +17,7 @@ char *fbuffer;
 int echo=FALSE;
 int ansi_mode=FALSE;
 int byte_size=8;
+int g_hex=FALSE;
 
 
 
@@ -633,8 +634,8 @@ mode_terminal(HANDLE hcom,char *port_name,int baud_rate)
 {
 	int i,j,length,key;
 	char buffer[0x100],RXbuf;
-	int hex=FALSE;
 	int dtr_flag=TRUE;
+	FILE *flog=0;
 
 	HANDLE hcon;
 	CONSOLE_CURSOR_INFO con_cursor;
@@ -646,7 +647,7 @@ mode_terminal(HANDLE hcom,char *port_name,int baud_rate)
 	PurgeComm(hcom,PURGE_RXCLEAR|PURGE_RXABORT);
 
 	hcon = GetStdHandle(STD_OUTPUT_HANDLE);
-	set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+	set_console_title(port_name,baud_rate,echo,ansi_mode,g_hex);
 
 	con_cursor.bVisible=TRUE;
 	con_cursor.dwSize=100;
@@ -669,10 +670,14 @@ mode_terminal(HANDLE hcom,char *port_name,int baud_rate)
 				parse_ansi(buffer,length);
 			else
 			{
-				if(hex)
+				if(g_hex)
 					dump_data(buffer,length);
-				else
+				else{
 					printf("%.*s",length,buffer);
+					if(flog!=0){
+						fprintf(flog,"%.*s",length,buffer);
+					}
+				}
 				//handle_pinpad(hcom,buffer,length);
 				//for(i=0;i<length;i++)
 				//	printf("%c",buffer[i]);
@@ -691,15 +696,26 @@ mode_terminal(HANDLE hcom,char *port_name,int baud_rate)
 			switch(key)
 			{	
 				case 0x3B: //F1
-					printf("\nF3=set DTR\n");
+					printf("\nF3=start log file\n");
 					break;
 				case 0x3C: //F2
 					echo^=TRUE;
-					set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+					set_console_title(port_name,baud_rate,echo,ansi_mode,g_hex);
 					break;
 				case 0x3D: //F3
+					if(0==flog){
+						flog=fopen("b:\\log.txt","wb");
+						printf("log file opened\n");
+					}
+					else{
+						fclose(flog);
+						flog=0;
+						printf("log file closed\n");
+					}
+					/*
 					dtr_flag=!dtr_flag;
 					set_dtr(hcom,dtr_flag);
+					*/
 					break;
 				case 0x3F: //f5
 					printf("enter byte size (current=%i)\n",byte_size);
@@ -708,16 +724,23 @@ mode_terminal(HANDLE hcom,char *port_name,int baud_rate)
 					printf("setting com port\n");
 					goto REOPEN;
 					break;
+				case 0x40: //f6
+					printf("\nenter 2 byte hex value to send:\n");
+					i=0;
+					scanf("%02X",&i);
+					RXbuf=i;
+					WriteFile(hcom,&RXbuf,1,&length,NULL);
+					break;
 				case 0x42: //f8
-					hex=!hex;
-					set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+					g_hex=!g_hex;
+					set_console_title(port_name,baud_rate,echo,ansi_mode,g_hex);
 					break;
 				case 0x43: //f9
 					clrscr();
 					break;
 				case 0x44: //f10
 					ansi_mode^=TRUE;
-					set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+					set_console_title(port_name,baud_rate,echo,ansi_mode,g_hex);
 					break;
 				case 0x85: //F11
 REOPEN:
@@ -742,7 +765,7 @@ REOPEN:
 						if(set_baud(hcom,baud))
 						{
 							baud_rate=baud;
-							set_console_title(port_name,baud_rate,echo,ansi_mode,hex);
+							set_console_title(port_name,baud_rate,echo,ansi_mode,g_hex);
 						}
 					}
 					break;
@@ -810,9 +833,15 @@ int main(int argc, char **argv)
 				sscanf(argv[i],"-port=%254s",port_name);
 				printf("using port name %s\n",port_name);
 			}
+			else if(strstr(argv[i],"-hex"))
+			{
+				g_hex=1;
+				printf("using hex mode\n");
+			}
 			else 
 			{
-				printf("usage: [-port=\\\\.\\COM1] [-echo] [-ansi] [-baud=#]\n");
+				printf("usage: [-port=\\\\.\\COM1] [-echo] [-ansi] [-baud=#] [-hex]\n");
+				printf("F6=enter byte code\n");
 			}
 		}
 	}
